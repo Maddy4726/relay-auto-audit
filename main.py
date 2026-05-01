@@ -13,22 +13,22 @@ else:
     for pdf_path in sorted(pdf_files):
         print(f"\n{'='*60}")
         print(f"Processing: {os.path.basename(pdf_path)}")
-        print('='*60)
-        
+        print("=" * 60)
+
         try:
             text = extract_text(pdf_path)
-            
+
             print("\n--- RAW TEXT START ---\n")
-            print(text[:1000])   # print first 1000 chars
+            print(text[:1000])  # print first 1000 chars
             print("\n--- RAW TEXT END ---\n")
-            
+
             data = extract_data(text)
             print("\nExtracted Data:", data)
-            
+
             issues = run_audit(data)
-            
+
             print("\n=== AUDIT RESULT ===\n")
-            
+
             if not issues:
                 print("✓ PASS")
             else:
@@ -36,5 +36,5 @@ else:
                     print(f"✗ {i}")
         except Exception as e:
             print(f"ERROR processing {pdf_path}: {str(e)}")
-        
+
         print()

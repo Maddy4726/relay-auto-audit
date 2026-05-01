@@ -1,0 +1,27 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.env/
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+
+# Logs and databases
+*.log
+*.sqlite3
+
+# Ignore generated Python bytecode
+*.pyc
+
+# Ignore PDF test files in the data folder
+/data/*.pdf
+
+# Ignore system files
+.DS_Store
+Thumbs.db
