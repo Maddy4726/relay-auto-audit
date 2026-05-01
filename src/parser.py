@@ -36,7 +36,10 @@ def extract_data(text):
     data["ct_y_present"] = not re.search(r'Y\s+-', text)
     data["winding_resistance"] = extract_winding_resistance(text)
     data["voltage_ratio"] = extract_voltage_ratio(text)
-    data["magnetizing_current"] = extract_magnetizing_current(text)    
+    data["magnetizing_current"] = extract_magnetizing_current(text)
+    data["ct_ratio_spec"] = extract_ct_ratio(text)
+    data["ct_ratio_measured"] = extract_ct_measured_ratio(text)
+    data["short_circuit"] = extract_short_circuit(text)
     
    
 
@@ -70,3 +73,75 @@ def extract_magnetizing_current(text):
     if match:
         return [float(match.group(1)), float(match.group(2)), float(match.group(3))]
     return []
+
+def extract_ct_ratio(text):
+    # Extract CT ratio specification (e.g., 100 / 5 A)
+    match = re.search(r'CT\s*\(CTR:\s*(\d+)\s*\/\s*(\d+)\s*A\)', text)
+    if match:
+        primary = float(match.group(1))
+        secondary = float(match.group(2))
+        return primary / secondary
+    return None
+
+def extract_ct_measured_ratio(text):
+    # Extract measured CT ratios from ratio test
+    ct_ratios = {}
+    
+    # Find the CT ratio test section
+    section = re.search(r'3\.1\s+CT.*?(?=3\.2|$)', text, re.S)
+    if not section:
+        return ct_ratios
+    
+    block = section.group(0)
+    
+    # Extract rows: Phase | Injected Primary (A) | Measured Secondary (A)
+    matches = re.findall(r'(R|Y|B)\s+(\d+)\s+([\d\-]+)', block)
+    
+    for phase, injected, measured in matches:
+        injected = float(injected)
+        measured_val = measured.strip()
+        if measured_val != '-':
+            measured = float(measured_val)
+            if measured > 0:
+                ct_ratios[phase] = injected / measured
+    
+    return ct_ratios
+
+def extract_delay_value(text, label_pattern):
+    match = re.search(rf'{label_pattern}.*?([\d\.]+)\s*(?:ms|msec)', text, re.I | re.S)
+    if match:
+        return float(match.group(1))
+    return None
+
+
+def extract_short_circuit(text):
+    # Extract short circuit (DTOC) settings and measured values
+    sc_data = {}
+    
+    # Find SHORT CIRCUIT section
+    match = re.search(r'4\.2\s+SHORT CIRCUIT:.*?Set Current\s*=\s*([\d\.]+)\s*x\s*In.*?Delay\s*=\s*([\d\.]+)\s*m?Sec', text, re.S | re.I)
+    if match:
+        sc_data['set_current'] = float(match.group(1))
+        sc_data['delay'] = float(match.group(2))
+        sc_data['output_contact_delay'] = extract_delay_value(text, r'output.*contact') or 20.0
+        sc_data['master_trip_delay'] = extract_delay_value(text, r'master.*trip') or 30.0
+        
+        # Find the first measured row following the 4.2 section
+        sub = text[match.end():]
+        block_match = re.search(
+            r'Phase\s*\n\s*Injected Current\s*\(A\)\s*\n\s*Operated Time\s*\(Sec\)\s*(.*?)\n\s*Phase\b',
+            sub,
+            re.S | re.I,
+        )
+        if block_match:
+            block = block_match.group(1)
+            rows = re.findall(r'([A-Z]{1,3})\s*\n\s*([\d\.]+)\s*\n\s*([\d\.]+)', block)
+            if rows:
+                phase, injected, operated = rows[0]
+                sc_data['measurement'] = {
+                    'phase': phase.strip(),
+                    'injected_current': float(injected),
+                    'operated_time': float(operated),
+                }
+    
+    return sc_data
