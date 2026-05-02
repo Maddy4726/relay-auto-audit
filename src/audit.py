@@ -25,6 +25,7 @@ def run_audit(data):
         check_voltage_ratio(data),
         check_magnetizing_current(data),
         check_short_circuit(data),
+        check_overcurrent_logic(data)
     ]
 
     for c in checks:

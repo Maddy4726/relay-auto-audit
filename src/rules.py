@@ -215,6 +215,34 @@ def check_cbct_ratio(data):
     
     return None
 
+def check_overcurrent_logic(data):
+    oc = data.get("overcurrent", {})
+    phases = oc.get("phases", {})
+    
+    if not oc or not phases:
+        return "WARNING: Overcurrent test data missing"
+
+    setting_percent = oc.get("setting_percent")
+    ct_ratio = data.get("ct_ratio_spec") # 100/5 = 20.0
+
+    if not setting_percent or not ct_ratio:
+        return None
+
+    # CT secondary is 5A; Expected = 5A * (600/100) = 30A[cite: 5]
+    expected_current = 5.0 * (setting_percent / 100)
+    issues = []
+
+    for phase, info in phases.items():
+        injected = info["injected_current"]
+        if not info["operated"]:
+            issues.append(f"FAIL: {phase} phase relay did not operate")
+        
+        # Check if injected current (32.6 or 29.9) is near expected 30A[cite: 5]
+        if abs(injected - expected_current) / expected_current > 0.15:
+            issues.append(f"FAIL: {phase} phase current mismatch")
+
+    return "; ".join(issues) if issues else None
+
 
 def check_earth_fault_cbct(data):
     """Check earth fault protection through CBCT"""

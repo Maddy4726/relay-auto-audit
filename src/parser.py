@@ -66,6 +66,31 @@ def extract_insulation_resistance(text):
 
     return ir_data
 
+def extract_overcurrent_advanced(text):
+    data = {"phases": {}}
+    # Isolate the Over Current section specifically
+    section = re.search(r"4\.1\s+OVER CURRENT.*?(?=4\.2|$)", text, re.S | re.I)
+    if not section:
+        return data
+
+    block = section.group(0)
+    
+    # Extract Set Current (600%)
+    set_match = re.search(r"Set Current\s*=\s*(\d+)", block, re.I)
+    if set_match:
+        data["setting_percent"] = float(set_match.group(1))
+
+    # Pattern to catch: Phase | Current | Status
+    # This handles the pipe symbols seen in the PDF
+    matches = re.findall(r"(R|Y|B)\s*\|\s*(\d+\.?\d*)\s*\|\s*(OPERATED|NOT OPERATED)", block, re.I)
+
+    for phase, current, status in matches:
+        data["phases"][phase.upper()] = {
+            "injected_current": float(current),
+            "operated": status.upper() == "OPERATED"
+        }
+    return data
+
 
 def extract_coil_resistance(text):
     coil_data = {}
@@ -332,6 +357,7 @@ def extract_data(text):
     data["magnetic_balance"] = extract_magnetic_balance(text)
     data["lt_breaker_contact_resistance"] = extract_lt_breaker_contact_resistance(text)
     data["final_checks"] = extract_final_checks(text)
+    data["overcurrent"] = extract_overcurrent_advanced(text)
 
     data["close_time"] = extract_time(text)
 
