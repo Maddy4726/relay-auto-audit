@@ -39,8 +39,8 @@ def extract_insulation_resistance(text):
         while i < len(lines):
             line = lines[i].strip()
             # Look for test type lines (Pole – Pole', Phase – Phase, Pole – Earth)
-            if 'Pole' in line and ('Pole' in line or 'Phase' in line or 'Earth' in line):
-                test_type = re.sub(r'[^\w]', '', line).lower()
+            if 'Pole' in line or 'Phase' in line or 'Earth' in line:
+                test_type = re.sub(r'[^\w_]', '', re.sub(r'\s*[–\-]\s*', '_', line)).lower()
                 # Next line should be condition (Open/Close)
                 if i + 1 < len(lines):
                     condition = lines[i + 1].strip()
@@ -58,7 +58,8 @@ def extract_insulation_resistance(text):
                                 "voltage": voltage_line,
                                 "r_phase": r_phase,
                                 "y_phase": y_phase,
-                                "b_phase": b_phase
+                                "b_phase": b_phase,
+                                "resistance": min([r_phase, y_phase, b_phase], key=lambda x: float(x.replace('>', '').replace('<', '')) if x.replace('>', '').replace('<', '').replace('.', '').isdigit() else float('inf'))
                             }
                 i += 6  # Skip the processed lines
             else:
