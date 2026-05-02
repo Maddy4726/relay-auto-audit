@@ -199,48 +199,73 @@ def check_time_interval(data):
 
 def check_cbct_ratio(data):
     """Check CBCT ratio test results"""
+    
     cbct = data.get("cbct_ratio", {})
     if not cbct:
         return "WARNING: CBCT ratio test not found"
     
-    # Check if ratio calculation is correct (150/1 = 150)
     injected = cbct.get("injected_primary", 0)
     measured = cbct.get("measured_secondary", 0)
+    expected_ratio = cbct.get("ratio")  # <-- dynamic
+    
+    # Fallback if ratio not extracted
+    if not expected_ratio:
+        return "WARNING: CBCT ratio not available"
     
     if injected > 0 and measured > 0:
-        ratio = injected / measured
-        expected_ratio = 150.0  # CBCT ratio 150/1
-        if abs(ratio - expected_ratio) / expected_ratio > 0.05:  # 5% tolerance
-            return f"FAIL: CBCT ratio mismatch (expected {expected_ratio}, got {ratio:.2f})"
+        actual_ratio = injected / measured
+        
+        error = abs(actual_ratio - expected_ratio) / expected_ratio
+        
+        # Allow higher tolerance for CBCT (field reality)
+        if error > 0.10:   # 10% tolerance (CBCTs are noisy)
+            return (
+                f"FAIL: CBCT ratio mismatch "
+                f"(expected {expected_ratio}, got {actual_ratio:.2f}, "
+                f"error {error*100:.1f}%)"
+            )
     
     return None
 
 def check_overcurrent_logic(data):
-    oc = data.get("overcurrent", {})
-    phases = oc.get("phases", {})
+    """Check overcurrent protection test logic and operation"""
+    oc = data.get("over_current_protection", {})
     
-    if not oc or not phases:
+    if not oc:
         return "WARNING: Overcurrent test data missing"
-
-    setting_percent = oc.get("setting_percent")
-    ct_ratio = data.get("ct_ratio_spec") # 100/5 = 20.0
-
-    if not setting_percent or not ct_ratio:
-        return None
-
-    # CT secondary is 5A; Expected = 5A * (600/100) = 30A[cite: 5]
-    expected_current = 5.0 * (setting_percent / 100)
+    
     issues = []
-
-    for phase, info in phases.items():
-        injected = info["injected_current"]
-        if not info["operated"]:
-            issues.append(f"FAIL: {phase} phase relay did not operate")
-        
-        # Check if injected current (32.6 or 29.9) is near expected 30A[cite: 5]
-        if abs(injected - expected_current) / expected_current > 0.15:
-            issues.append(f"FAIL: {phase} phase current mismatch")
-
+    
+    # Check simple phase-wise operation
+    phases = oc.get("phases", {})
+    if phases:
+        for phase, info in phases.items():
+            if not info.get("operated", False):
+                issues.append(f"FAIL: Overcurrent {phase} phase did not operate")
+    
+    # Check detailed multi-multiplier test if available
+    detailed_test = oc.get("detailed_test", {})
+    if detailed_test:
+        for phase, test_data in detailed_test.items():
+            if phase in ["R", "Y", "B"]:
+                # Check operation currents increase with multiplier (X1.5 < X2 < X4)
+                op_currents = test_data.get("operation_currents_a", {})
+                if op_currents:
+                    x15 = op_currents.get("x1.5")
+                    x2 = op_currents.get("x2")
+                    x4 = op_currents.get("x4")
+                    
+                    if x15 and x2 and x4:
+                        if not (x15 < x2 < x4):
+                            issues.append(f"WARNING: Overcurrent {phase} phase operation current sequence incorrect: X1.5={x15}A, X2={x2}A, X4={x4}A")
+                
+                # Check operated time decreases as current increases
+                injected = test_data.get("injected_current_a")
+                operated_time = test_data.get("operated_time_sec")
+                if injected and operated_time:
+                    if operated_time > 10:
+                        issues.append(f"WARNING: Overcurrent {phase} phase operated time {operated_time}s seems high")
+    
     return "; ".join(issues) if issues else None
 
 
@@ -264,17 +289,43 @@ def check_over_current_protection(data):
     if not oc:
         return "WARNING: Over current protection test not found"
     
-    # Check set current
+    issues = []
+    
+    # Check set current (typically 350-800% for relays)
     set_current = oc.get("set_current")
-    if set_current and (set_current < 400 or set_current > 800):
-        return f"WARNING: Over current set current {set_current}% outside typical range (400-800%)"
+    if set_current:
+        if set_current < 100 or set_current > 1000:
+            issues.append(f"WARNING: Over current set current {set_current}% outside typical range (100-1000%)")
+    else:
+        issues.append("WARNING: Over current set current not found")
     
-    # Check operated time
-    operated_time = oc.get("operated_time")
-    if operated_time and operated_time > 1.0:
-        return f"WARNING: Over current operated time {operated_time}s too high (>1s)"
+    # Check time setting
+    time_setting = oc.get("time")
+    if time_setting:
+        if time_setting not in ["INST", "0.02", "0.05", "0.1", "0.2"] and not time_setting.replace(".", "").isdigit():
+            issues.append(f"WARNING: Unusual over current time setting {time_setting}")
+    else:
+        issues.append("WARNING: Over current time setting not found")
     
-    return None
+    # Check simple phase-wise operation data
+    phases = oc.get("phases", {})
+    if phases:
+        for phase, phase_info in phases.items():
+            if not phase_info.get("operated", False):
+                issues.append(f"FAIL: Over current {phase} phase did not operate")
+    
+    # Check detailed multi-multiplier test data (if available)
+    detailed = oc.get("detailed_test", {})
+    if detailed:
+        for phase, test_data in detailed.items():
+            if phase in ["R", "Y", "B"]:
+                # Check that operation times decrease as current multiplier increases (X1.5 > X2 > X4)
+                injected = test_data.get("injected_currents_a", [])
+                if len(injected) >= 2:
+                    if injected[0] <= injected[1]:
+                        issues.append(f"WARNING: Over current {phase} phase injected current order issue: X1.5={injected[0]}A, X2={injected[1]}A")
+    
+    return "; ".join(issues) if issues else None
 
 
 def check_overload_protection(data):

@@ -19,7 +19,7 @@ else:
             text = extract_text(pdf_path)
 
             print("\n--- RAW TEXT START ---\n")
-            print(text[:1000])  # print first 1000 chars
+            print(text[:2000])  # print first 2000 chars
             print("\n--- RAW TEXT END ---\n")
 
             data = extract_data(text)

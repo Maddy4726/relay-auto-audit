@@ -150,18 +150,120 @@ def extract_time_interval(text):
 
 def extract_cbct_ratio(text):
     """Extract CBCT ratio test values"""
+    
     cbct_data = {}
-    
-    # Look for CBCT section and the measurement table
-    section = re.search(r"CBCT.*?10\s+67\.0", text, re.S)
-    if section:
+
+    # Step 1: isolate CBCT section (between 3.2 and 3.3)
+    section = re.search(
+        r"3\.2\s*CBCT.*?(?=3\.3)",
+        text,
+        re.S | re.I
+    )
+
+    if not section:
+        return cbct_data
+
+    block = section.group(0)
+
+    # Step 2: extract ratio (e.g., 50/1)
+    ratio_match = re.search(
+        r"RATIO[:\s]*([\d\.]+)\s*/\s*([\d\.]+)",
+        block,
+        re.I
+    )
+
+    ratio = None
+    if ratio_match:
+        primary = float(ratio_match.group(1))
+        secondary = float(ratio_match.group(2))
+        if secondary != 0:
+            ratio = primary / secondary
+
+    # Step 3: extract injected & measured values
+    # more flexible: allows spaces, line breaks, OCR noise
+    value_match = re.search(
+        r"CBCT\s+([\d\.]+)\s+([\d\.]+)",
+        block,
+        re.I
+    )
+
+    if not value_match:
+        # fallback: pick first two numbers after "Injected current"
+        value_match = re.search(
+            r"Injected.*?\(?A\)?\s*([\d\.]+).*?Secondary.*?\(?mA\)?\s*([\d\.]+)",
+            block,
+            re.S | re.I
+        )
+
+    if value_match:
+        injected = float(value_match.group(1))
+        measured_mA = float(value_match.group(2))
+
         cbct_data = {
-            "injected_primary": 10.0,
-            "measured_secondary": 0.067  # 67 mA = 0.067 A
+            "injected_primary": injected,
+            "measured_secondary": measured_mA / 1000,  # mA → A
+            "ratio": ratio
         }
-    
+
     return cbct_data
 
+
+import re
+
+def extract_overload(text):
+    """Extract overload protection data"""
+    
+    overload_data = {}
+
+    # Step 1: isolate section 4.2
+    section = re.search(
+        r"4\.2\s*OVERLOAD PROTECTION.*?(?=LT EARTH FAULT|5\.0|$)",
+        text,
+        re.S | re.I
+    )
+
+    if not section:
+        return overload_data
+
+    block = section.group(0)
+
+    # Step 2: extract settings
+    setting_match = re.search(r"Setting\s*=\s*([\d\.]+)\s*A", block, re.I)
+    tms_match = re.search(r"TMS\s*=\s*([\d\.]+)", block, re.I)
+
+    if setting_match:
+        overload_data["setting_current"] = float(setting_match.group(1))
+
+    if tms_match:
+        overload_data["tms"] = float(tms_match.group(1))
+
+    # Step 3: extract phase-wise data
+    phase_data = {}
+
+    rows = re.findall(
+        r"\b(R|Y|B)\s+([\d\.\-]+)\s+([\d\.\-]+)\s+([\d\.\-]+)\s+([\d\.\-]+)\s+([\d\.\-]+)\s+([\d\.\-]+)\s+([\d\.\-]+)\s+([\d\.\-]+)",
+        block
+    )
+
+    for row in rows:
+        phase = row[0]
+
+        rotation = float(row[1]) if row[1] != '-' else None
+        operation = float(row[2]) if row[2] != '-' else None
+
+        injected = list(map(float, row[3:6]))   # X1.5, X2, X4
+        times = list(map(float, row[6:9]))      # corresponding times
+
+        phase_data[phase] = {
+            "rotation_current": rotation,
+            "operation_current": operation,
+            "injected_currents": injected,
+            "operating_times": times
+        }
+
+    overload_data["phases"] = phase_data
+
+    return overload_data
 
 def extract_earth_fault_cbct(text):
     """Extract earth fault protection through CBCT"""
@@ -182,35 +284,81 @@ def extract_over_current_protection(text):
     """Extract over current protection test values"""
     oc_data = {}
     
-    # Look for over current section
-    section = re.search(r"4\.1\s+OVER CURRENT.*?(?=4\.2|$)", text, re.S)
-    if section:
-        block = section.group(0)
-        # Extract set current and time
-        set_match = re.search(r"Set\s+Current\s*=\s*(\d+)", block, re.I)
-        time_match = re.search(r"Time\s*=\s*(INST|\d+)", block, re.I)
+    # Extract set current and time from section 4.1
+    section = re.search(r"4\.1\s+OVER CURRENT.*?(?=4\.2|$)", text, re.S | re.I)
+    if not section:
+        return oc_data
         
-        if set_match:
-            oc_data["set_current"] = int(set_match.group(1))
-        if time_match:
-            oc_data["time"] = time_match.group(1)
+    block = section.group(0)
+    
+    # Extract set current and time
+    set_match = re.search(r"Set\s+Current\s*=\s*(\d+)\s*%?", block, re.I)
+    time_match = re.search(r"Time\s*=\s*(INST|\d+)", block, re.I)
+    
+    if set_match:
+        oc_data["set_current"] = int(set_match.group(1))
+    if time_match:
+        oc_data["time"] = time_match.group(1)
+    
+    # Look for the phase-wise operation table (appears in the full text, not just 4.1 section)
+    # Pattern: "Phase ... Injected Current ... Status" followed by phase rows
+    phase_table = re.search(
+        r"Phase\s+Injected Current\s*\(A\)\s+Status.*?(?=Phase\s+Rotation|RYB|SHAILJA)",
+        text,
+        re.S | re.I
+    )
+    
+    simple_phase_data = {}
+    if phase_table:
+        phase_rows = re.findall(r"(R|Y|B)\s+(\d+\.?\d*)\s+(OPERATED|NOT OPERATED)", phase_table.group(0), re.I)
+        for phase, current, status in phase_rows:
+            simple_phase_data[phase] = {
+                "injected_current": float(current),
+                "operated": status.upper() == "OPERATED"
+            }
+    
+    if simple_phase_data:
+        oc_data["phases"] = simple_phase_data
+    
+    # Extract detailed multi-multiplier test data (RYB phase rotation with X1.5, X2, X4)
+    # This table shows: Phase | Rotation(X1.5,X2,X4) | Operation(X1.5,X2,X4) | Injected Current | Operated Time
+    detailed_table = re.search(
+        r"Phase\s+Rotation\(A\).*?(?=SHAILJA|$)",
+        text,
+        re.S | re.I
+    )
+    
+    detailed_phases = {}
+    if detailed_table:
+        # Pattern for each phase row: Phase Letter followed by 8 numbers (rotation X1.5, X2, X4, operation X1.5, X2, X4, injected, time)
+        detailed_rows = re.findall(
+            r"(R|Y|B)\s+([\d\.\-]+)\s+([\d\.\-]+)\s+([\d\.\-]+)\s+([\d\.\-]+)\s+([\d\.\-]+)\s+([\d\.\-]+)\s+([\d\.\-]+)\s+([\d\.\-]+)",
+            detailed_table.group(0),
+            re.I
+        )
         
-        # Extract phase rotation and operation data
-        rotation_matches = re.findall(r"(RYB)\s+(\d+\.?\d*)\s+(\d+\.?\d*)\s+(\d+\.?\d*)\s+(\d+\.?\d*)\s+(\d+\.?\d*)\s+(\d+\.?\d*)", block)
-        if rotation_matches:
-            phase, x15, x2, x4, op_x15, op_x2, op_x4, time = rotation_matches[0]
-            oc_data["phase_rotation"] = phase
-            oc_data["multipliers"] = {
-                "x1.5": float(x15),
-                "x2": float(x2),
-                "x4": float(x4)
-            }
-            oc_data["operation_currents"] = {
-                "x1.5": float(op_x15),
-                "x2": float(op_x2),
-                "x4": float(op_x4)
-            }
-            oc_data["operated_time"] = float(time)
+        for row in detailed_rows:
+            phase = row[0]
+            if phase == "RYB" or all(x == '-' for x in row[1:]):
+                continue  # Skip RYB row or empty rows
+            
+            try:
+                rotation_vals = [float(row[1]), float(row[2]), float(row[3])]
+                operation_vals = [float(row[4]), float(row[5]), float(row[6])]
+                injected_current = float(row[7])
+                operated_time = float(row[8])
+                
+                detailed_phases[phase] = {
+                    "rotation_currents_x": {"x1.5": rotation_vals[0], "x2": rotation_vals[1], "x4": rotation_vals[2]},
+                    "operation_currents_a": {"x1.5": operation_vals[0], "x2": operation_vals[1], "x4": operation_vals[2]},
+                    "injected_current_a": injected_current,
+                    "operated_time_sec": operated_time
+                }
+            except (ValueError, IndexError):
+                pass  # Skip rows with invalid data
+    
+    if detailed_phases:
+        oc_data["detailed_test"] = detailed_phases
     
     return oc_data
 
