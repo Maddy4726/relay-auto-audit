@@ -334,11 +334,6 @@ def check_overload_protection(data):
     if not ol:
         return "WARNING: Overload protection test not found"
     
-    # Check setting
-    setting = ol.get("setting")
-    if setting and (setting < 3.0 or setting > 8.0):
-        return f"WARNING: Overload setting {setting}A outside typical range (3-8A)"
-    
     # Check TDR
     tdr = ol.get("tdr")
     if tdr and (tdr < 0.5 or tdr > 1.5):
