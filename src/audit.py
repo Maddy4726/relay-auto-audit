@@ -5,7 +5,18 @@ def run_audit(data):
     issues = []
 
     checks = [
-        check_contact_balance(list(data["contact_resistance"].values())),
+        check_contact_balance(list(data.get("contact_resistance", {}).values())),
+        check_insulation_resistance(data),
+        check_coil_resistance(data),
+        check_time_interval(data),
+        check_cbct_ratio(data),
+        check_earth_fault_cbct(data),
+        check_over_current_protection(data),
+        check_overload_protection(data),
+        check_earth_fault_protection(data),
+        check_magnetic_balance(data),
+        check_lt_breaker_contact_resistance(data),
+        check_final_checks(data),
         check_ct_ratio(data),
         check_binary(data),
         check_comm(data),
